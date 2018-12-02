@@ -113,10 +113,15 @@ class CameraCalibrator:
     side-by-side in the specified output directory.
   """
   def visualize_calibration(self):
-    # Make the output directory if it doesn't already exists
+    # Terminate if the output folder already exists, assume the content is already inside
     calibration_output_images_path = pathlib.Path(self.calibration_output_images_dir)
-    if not calibration_output_images_path.exists():
-      calibration_output_images_path.mkdir(parents=True)
+    if calibration_output_images_path.exists():
+      print('{} already exists, not going to regenerate contents'.format(
+          str(calibration_output_images_path)))
+      return
+
+    # Make the output directory since it doesn't already exists
+    calibration_output_images_path.mkdir(parents=True)
 
     calibration_input_images = pathlib.Path(self.calibration_input_images_dir).iterdir()
     for img_path in calibration_input_images:
