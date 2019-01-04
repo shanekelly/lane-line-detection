@@ -1,4 +1,6 @@
 import cv2
+import math
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -7,39 +9,98 @@ from camera_calibrator import CameraCalibrator
 
 class LaneFinder:
 
+  """
+  @param {tuple} img_size - A tuple with two elements (y size, x size).
+  @param {float} top_width_pct - The length of the top side of the road, as a percentage of
+    the entire image width.
+  @param {float} bot_width_pct - The length of the bottom side of the road, as a percentage
+    of the entire image width.
+  @param {float} height_pct - The height of the road, as a percentage of the entire image
+    height.
+  @returns {np.array} - A numpy array of tuples that represent the vertices (x, y) of a
+    road-shaped trapezoid.
+  """
   @staticmethod
-  def get_road_shaped_points(img_size, top_width_pct=0.100, bot_width_pct=1.000, height_pct=0.375):
-    mid_x = img_size[0] // 2
-    top_width = int(img_size[0] * top_width_pct)
-    bot_width = int(img_size[0] * bot_width_pct)
-    height = int(img_size[1] * height_pct)
+  def get_road_shaped_points(img_size, top_width_pct, bot_width_pct, height_pct):
+    mid_x = img_size[1] // 2 # the x index of the middle pixel of the image
+    top_width = int(img_size[1] * top_width_pct) # top width, in pixels
+    bot_width = int(img_size[1] * bot_width_pct) # bottom width, in pixels
+    height = int(img_size[0] * height_pct) # height, in pixels
 
-    bot_left = (mid_x - bot_width // 2, img_size[1])
-    top_left = (mid_x - top_width // 2, img_size[1] - height)
-    bot_right = (mid_x + bot_width // 2, img_size[1])
-    top_right = (mid_x + top_width // 2, img_size[1] - height)
-    points = np.float32([bot_left, top_left, bot_right, top_right])
+    # Define the corners of the road-shaped trapezoid
+    bot_left = (mid_x - bot_width // 2, img_size[0])
+    top_left = (mid_x - top_width // 2, img_size[0] - height)
+    bot_right = (mid_x + bot_width // 2, img_size[0])
+    top_right = (mid_x + top_width // 2, img_size[0] - height)
+    points = np.array([bot_left, top_left, bot_right, top_right]).astype(np.float32)
+
     return points
 
 
+  """
+  @param {tuple} img_size - A tuple with two elements (y size, x size).
+  @param {float} width_pct - The width of the rectangle, as a percentage of the entire
+    image width.
+  @param {float} height_pct - the height of the rectangle, as a percentage of the entire
+    image height.
+  @returns {np.array} - A numpy array of tuples that represent the vertices (x, y) of a rectangle.
+  """
   @staticmethod
-  def get_rectangle_shaped_points(img_size, width_pct=1.000, height_pct=1.000):
-    mid_x = img_size[0] // 2
-    width = int(img_size[0] * width_pct)
-    height = int(img_size[1] * height_pct)
+  def get_rectangle_shaped_points(img_size, width_pct, height_pct):
+    mid_x = img_size[1] // 2 # the x index of the middle pixel of the image
+    width = int(img_size[1] * width_pct) # width, in pixels
+    height = int(img_size[0] * height_pct) # width, in pixels
 
-    bot_left = (mid_x - width // 2, img_size[1])
-    top_left = (mid_x - width // 2, img_size[1] - height)
-    bot_right = (mid_x + width // 2, img_size[1])
-    top_right = (mid_x + width // 2, img_size[1] - height)
-    points = np.float32([bot_left, top_left, bot_right, top_right])
+    # Define the corners of the rectangle
+    bot_left = (mid_x - width // 2, img_size[0])
+    top_left = (mid_x - width // 2, img_size[0] - height)
+    bot_right = (mid_x + width // 2, img_size[0])
+    top_right = (mid_x + width // 2, img_size[0] - height)
+    points = np.array([bot_left, top_left, bot_right, top_right]).astype(np.float32)
+
     return points
 
 
+  """
+  @param {np.array} img - A two-dimensional numpy array of the image to draw on.
+  @param {list} points - A list of tuples that represent the vertices (x, y) of the points to draw.
+  @param {int} radius - The radius of the points to draw.
+  @param {tuple} color - A three element tuple that represents the color of the points to draw.
+  """
   @staticmethod
   def draw_points_on_img(img, points, radius, color):
     for point in points:
       cv2.circle(img, (point[0], point[1]), radius, color, -1)
+
+
+  """
+  @param {list} img_dicts - A list of dictionaries that specify the details of the images to plot.
+  @param {np.array} img_dicts[].img - A two-dimensional numpy array image to plot.
+  @param {str} img_dicts[].title - The title of the image, to be written above the image.
+  @param {str} [img_dicts[].cmap] - The optional color mapping to use to plot the image.
+  """
+  @staticmethod
+  def plot_images(img_dicts):
+    num_plots = len(img_dicts)
+    num_cols = 3
+    num_rows = math.ceil(num_plots / num_cols)
+    grid = matplotlib.gridspec.GridSpec(num_rows, num_cols)
+    fig = plt.figure()
+    fontsize = 20
+
+    for i in range(num_plots):
+      ax = fig.add_subplot(grid[i])
+      img_dict = img_dicts[i]
+      if 'cmap' in img_dict:
+        ax.imshow(img_dict['img'], cmap=img_dict['cmap'])
+      else:
+        ax.imshow(img_dict['img'])
+      ax.set_title(img_dict['title'], fontsize=fontsize)
+      ax.set_axis_off()
+
+    mng = plt.get_current_fig_manager()
+    mng.resize(*mng.window.maxsize())
+    plt.show()
 
 
   def __init__(self, img_fname):
@@ -50,48 +111,224 @@ class LaneFinder:
     self.get_calibration()
 
 
+  """
+  Stores the camera calibration dictionary under self.calibration.
+  """
   def get_calibration(self):
     cc = CameraCalibrator('camera_calibration/input_images/', 'camera_calibration/output_images/',
         9, 6, 'camera_calibration/camera_calibration.json')
     cc.main()
+
     self.calibration = cc.calibration
 
 
-  def undistort(self, img_distorted):
-    img_undistorted = cv2.undistort(img_distorted, self.calibration['camera_matrix'],
+  """
+  @param {np.array} img - A two-dimensional numpy array distorted image to undistort according to
+    the camera calibration parameters stored in self.calibration.
+  @returns {np.array} - An undistorted version of the input image.
+  """
+  def undistort(self, img):
+    img_undistorted = cv2.undistort(img, self.calibration['camera_matrix'],
         self.calibration['distortion_coefficients'], None,  self.calibration['camera_matrix'])
+
     return img_undistorted
 
 
-  def warp(self, img_unwarped):
-    img_size = (img_unwarped.shape[1], img_unwarped.shape[0])
-    source_points = self.get_road_shaped_points(img_size)
-    destination_points = self.get_rectangle_shaped_points(img_size)
+  """
+  @param {np.array} img - A two-dimensional numpy array image to warp.
+  @returns {np.arary} - A two-dimensional numpy array that is version of the input image with the
+    perspective warped.
+  """
+  def warp(self, img):
+    # Warp the input image such that the vertices of the road-shaped polygon become co-incident with
+    #   the vertices of the image.
+    source_points = self.get_road_shaped_points(img.shape, top_width_pct=0.100, bot_width_pct=1.000,
+        height_pct=0.375)
+    destination_points = self.get_rectangle_shaped_points(img.shape, width_pct=1.000,
+        height_pct=1.000)
     M = cv2.getPerspectiveTransform(source_points, destination_points)
-    img_warped = cv2.warpPerspective(img_unwarped, M, img_size)
-    self.draw_points_on_img(img_unwarped, destination_points, 20, (0, 255, 0))
-    self.draw_points_on_img(img_unwarped, source_points, 10, (255, 0, 0))
+    img_warped = cv2.warpPerspective(img, M, img.shape[::-1])
+    self.draw_points_on_img(img, destination_points, 20, 1)
+    self.draw_points_on_img(img, source_points, 10, 1)
+
     return img_warped
+
+
+  """
+  @param {np.array} img - A three-channel two-dimensional numpy array image.
+  @returns {np.array} - A two-dimensional numpy array binary image that highlights the important
+    features of the input image (most notably, the lane lines, but also lots of other stuff that
+    will be filtered out later).
+  """
+  def threshold(self, img):
+    # Calculate gradient in the x direction
+    img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    img_gradient_x = cv2.Sobel(img_gray, cv2.CV_64F, 1, 0) # derivative in x direction
+    img_gradient_x = np.absolute(img_gradient_x) # absolute value
+    img_gradient_x = np.uint8(img_gradient_x * (255 / np.max(img_gradient_x))) # scale from 0 to 255
+
+    # Threshold x gradient
+    gradient_thresh_min = 20
+    gradient_thresh_max = 100
+    img_gradient_x_bin = np.zeros_like(img_gradient_x)
+    img_gradient_x_bin[(img_gradient_x >= gradient_thresh_min) & (img_gradient_x <=
+        gradient_thresh_max)] = 1
+
+    # Convert to HLS color space and separate the S channel
+    img_hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    s_channel = img_hls[:,:,2]
+
+    # Threshold the saturation color channel
+    s_thresh_min = 170
+    s_thresh_max = 255
+    img_s_bin = np.zeros_like(s_channel)
+    img_s_bin[(s_channel >= s_thresh_min) & (s_channel <= s_thresh_max)] = 1
+
+    # Combine the two binary images
+    img_thresholded_bin = np.zeros_like(img_gradient_x_bin)
+    img_thresholded_bin[(img_s_bin == 1) | (img_gradient_x_bin == 1)] = 1
+
+    return img_thresholded_bin
+
+
+  """
+  Uses a sliding window method to detect the pixels associated with each of the left and right lane
+    lines in an image.
+  @param {np.array} img_bin - A two-dimensional numpy array image binary.
+  @returns {tuple} - A tuple that contains the following: the x index of every pixel determined to be
+    part of the left lane line, the y index of every pixel determined to be part of the left lane
+    line, the x index of every pixel determined to be part of the right lane line, the y index of
+    every pixel determined to be part of the right lane line, and a two-dimensional numpy array
+    with the left lane line drawn in red and the right lane line drawn in blue.
+  """
+  def find_lane_pixels(self, img_bin):
+    img_height, img_width = img_bin.shape
+    # Create an output image to draw on and visualize
+    img_detected = np.dstack((img_bin, img_bin, img_bin))
+    # Take a histogram of the bottom half of the image
+    num_set_pixels_by_column = np.sum(img_bin[img_height // 2:,:], axis=0)
+    # Find the peak of the left and right halves of num_set_pixels_by_column. These will be the
+    #   starting point for the left and right lines
+    midpoint = np.int(img_width // 2)
+    left_x_start = np.argmax(num_set_pixels_by_column[:midpoint])
+    right_x_start = np.argmax(num_set_pixels_by_column[midpoint:]) + midpoint
+
+    num_windows = 9 # number of sliding windows
+    win_margin = 100 # the window width will be win_margin * 2
+    min_num_pixels = 50 # minimum number of pixels found to recenter window
+
+    # Height of windows based on num_windows and img_height
+    window_height = np.int(img_height // num_windows)
+    # Identify the x and y indices of all nonzero pixels in the image
+    nonzero_y_indices, nonzero_x_indices = img_bin.nonzero()
+    # Current positions of lanes to be updated later for each window in num_windows
+    curr_left_lane_x = left_x_start
+    curr_right_lane_x = right_x_start
+
+    # Create empty lists to receive left and right lane pixel indices
+    left_lane_pixel_indices = []
+    right_lane_pixel_indices = []
+
+    # Iterate over windows from bottom to top
+    for window in range(num_windows):
+      # Define the current window boundaries (including the margin in the x direction)
+      win_y_min = img_height - (window+1)*window_height
+      win_y_max = img_height - window*window_height
+      left_lane_win_x_min = curr_left_lane_x - win_margin
+      left_lane_win_x_max = curr_left_lane_x + win_margin
+      right_lane_win_x_min = curr_right_lane_x - win_margin
+      right_lane_win_x_max = curr_right_lane_x + win_margin
+
+      # Draw the windows
+      cv2.rectangle(img_detected, (left_lane_win_x_min, win_y_min), (left_lane_win_x_max,
+          win_y_max), (0, 255, 0), 2)
+      cv2.rectangle(img_detected, (right_lane_win_x_min, win_y_min), (right_lane_win_x_max,
+          win_y_max), (0, 255, 0), 2)
+
+      # Identify the nonzero pixels in x and y within the current window
+      curr_left_lane_pixel_indices = ((nonzero_y_indices >= win_y_min) &
+          (nonzero_y_indices < win_y_max) & (nonzero_x_indices >= left_lane_win_x_min) &
+          (nonzero_x_indices < left_lane_win_x_max)).nonzero()[0]
+      curr_right_lane_pixel_indices = ((nonzero_y_indices >= win_y_min) &
+          (nonzero_y_indices < win_y_max) & (nonzero_x_indices >= right_lane_win_x_min) &
+          (nonzero_x_indices < right_lane_win_x_max)).nonzero()[0]
+
+      # Append these indices to the lists
+      left_lane_pixel_indices.append(curr_left_lane_pixel_indices)
+      right_lane_pixel_indices.append(curr_right_lane_pixel_indices)
+
+      # If more than min_num_pixels found, recenter next window on their mean position
+      if len(curr_left_lane_pixel_indices) > min_num_pixels:
+        curr_left_lane_x = np.int(np.mean(nonzero_x_indices[curr_left_lane_pixel_indices]))
+      if len(curr_right_lane_pixel_indices) > min_num_pixels:
+        curr_right_lane_x = np.int(np.mean(nonzero_x_indices[curr_right_lane_pixel_indices]))
+
+    # Concatenate the arrays of pixel indices (previously was a list of lists of pixels)
+    left_lane_pixel_indices = np.concatenate(left_lane_pixel_indices)
+    right_lane_pixel_indices = np.concatenate(right_lane_pixel_indices)
+
+    # Extract left and right line pixel positions
+    left_lane_pixel_x_indices = nonzero_x_indices[left_lane_pixel_indices]
+    left_lane_pixel_y_indices = nonzero_y_indices[left_lane_pixel_indices]
+    right_lane_pixel_x_indices = nonzero_x_indices[right_lane_pixel_indices]
+    right_lane_pixel_y_indices = nonzero_y_indices[right_lane_pixel_indices]
+
+    # Color pixels that make up each lane
+    img_detected[left_lane_pixel_y_indices, left_lane_pixel_x_indices] = (255, 0, 0)
+    img_detected[right_lane_pixel_y_indices, right_lane_pixel_x_indices] = (0, 100, 255)
+
+    return left_lane_pixel_x_indices, left_lane_pixel_y_indices, right_lane_pixel_x_indices, \
+        right_lane_pixel_y_indices, img_detected
+
+
+  """
+  Fits a second order polynomial curve to each of the left and right lane lines.
+  @param {np.array} img_bin - A two-dimensional numpy array image binary that shows a top-down view
+    of a left and right lane line.
+  @returns {np.array} - A two-dimensional numpy array image binary with a polynomial line fit and
+    drawn on each of the left and right lane lines.
+  """
+  def fit_polynomials_to_lane_lines(self, img_bin):
+    # Find the pixels that make up each lane
+    left_lane_pixel_x_indices, left_lane_pixel_y_indices, right_lane_pixel_x_indices, \
+        right_lane_pixel_y_indices, img_detected = self.find_lane_pixels(img_bin)
+
+    # Fit a second order polynomial to each lane
+    left_lane_fit = np.polyfit(left_lane_pixel_y_indices, left_lane_pixel_x_indices, 2)
+    right_lane_fit = np.polyfit(right_lane_pixel_y_indices, right_lane_pixel_x_indices, 2)
+
+    # Generate x and y values for plotting
+    ploty = np.linspace(0, img_bin.shape[0]-1, img_bin.shape[0] )
+    try:
+      left_fitx = left_lane_fit[0]*ploty**2 + left_lane_fit[1]*ploty + left_lane_fit[2]
+      right_fitx = right_lane_fit[0]*ploty**2 + right_lane_fit[1]*ploty + right_lane_fit[2]
+    except TypeError: # if left_fitx and right_fitx are still None
+      print('The function failed to fit a line!')
+      left_fitx = 1*ploty**2 + 1*ploty
+      right_fitx = 1*ploty**2 + 1*ploty
+
+    # Draw the polynomial lines that are fit to each lane
+    left_lane_points = np.dstack((left_fitx, ploty)).astype(int)
+    right_lane_points = np.dstack((right_fitx, ploty)).astype(int)
+    cv2.polylines(img_detected, [left_lane_points, right_lane_points], isClosed=False,
+        color=(255, 255, 255), thickness=10)
+
+    return img_detected
 
 
   def main(self):
     img = cv2.cvtColor(cv2.imread(self.img_fname), cv2.COLOR_BGR2RGB)
     img_undistorted = self.undistort(img)
-    img_warped = self.warp(img_undistorted)
+    img_thresholded = self.threshold(img_undistorted)
+    img_warped = self.warp(img_thresholded)
+    img_lanes_detected = self.fit_polynomials_to_lane_lines(img_warped)
 
-    f, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(24, 9))
-    f.tight_layout()
-    fontsize = 30
-    ax1.imshow(img)
-    ax1.set_title('Original Image', fontsize=fontsize)
-    ax1.set_axis_off()
-    ax2.imshow(img_undistorted)
-    ax2.set_title('Undistorted Image', fontsize=fontsize)
-    ax2.set_axis_off()
-    ax3.imshow(img_warped)
-    ax3.set_title('Warped Image', fontsize=fontsize)
-    ax3.set_axis_off()
-    plt.show()
+    self.plot_images([
+      { 'img': img, 'title': 'Original' },
+      { 'img': img_undistorted, 'title': 'Undistorted' },
+      { 'img': img_thresholded, 'title': 'Thresholded', 'cmap': 'gray' },
+      { 'img': img_warped, 'title': 'Warped', 'cmap': 'gray' },
+      { 'img': img_lanes_detected, 'title': 'Lanes Detected' }])
 
 
 if __name__ == '__main__':
