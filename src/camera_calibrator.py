@@ -11,6 +11,18 @@ Calibrates cameras using checkerboard images to remove distortion.
 class CameraCalibrator:
 
   """
+  @param {list} l - A list that contains elements of any type (including more nested lists).
+  @returns {type} - The type of the element inside of the (possibly many nested) list.
+  """
+  @staticmethod
+  def get_base_type_of_list(l):
+    element = l
+    while type(element) is list:
+      element = element[0]
+    return type(element)
+
+
+  """
   @param calibration_input_images_dir {string}: The directory to read calibration input images from.
   @param calibration_output_images_dir {string}: The directory to write calibration output images
     to.
@@ -38,31 +50,35 @@ class CameraCalibrator:
 
 
   """
-  Converts numpy arrays in self.calibration to normal python lists and then serializes it to the
-    specified file.
+  Converts numpy arrays in self.calibration to normal python lists and then serializes it to
+    `self.camera_calibration_fname`.
   """
   def save_calibration(self):
     cal = {}
-    for k, v in self.calibration.items():
-      if type(v) is np.ndarray:
-        cal[k] = v.tolist()
+    for key, val in self.calibration.items():
+      if type(val) is np.ndarray:
+        cal[key] = val.tolist()
       else:
-        cal[k] = v
+        cal[key] = val
     json.dump(cal, open(self.camera_calibration_fname, 'w'), indent=2)
     print('Camera calibration saved to {}'.format(self.camera_calibration_fname))
 
 
   """
-  De-serializes the specified file, converts any normal python lists to numpy arrays, and then
-    stores it in self.calibration.
+  De-serializes the file at `self.camera_calibration_fname`, converts any normal python lists to
+    numpy arrays, and then stores it in self.calibration.
   """
   def load_calibration(self):
     cal = json.load(open(self.camera_calibration_fname, 'r'))
-    for k, v in cal.items():
-      if type(v) is list:
-        cal[k] = np.array(v)
+    for key, val in cal.items():
+      if type(val) is list: # load all lists as numpy arrays
+        base_type = self.get_base_type_of_list(val) # type of the elements inside of any nested lists
+        if base_type is float: # some camera calibration maps need to be float32 (not float64)
+          cal[key] = np.array(val).astype(np.float32)
+        else:
+          cal[key] = np.array(val)
       else:
-        cal[k] = v
+        cal[key] = val
     self.calibration = cal
     print('Camera calibration loaded from {}'.format(self.camera_calibration_fname))
 
@@ -100,12 +116,18 @@ class CameraCalibrator:
     cv2.destroyAllWindows()
 
     # Do camera calibration given object points and image points
+    img_shape = img.shape[:2][::-1] # store as (x size, y size)
     _, camera_matrix, distortion_coefficients, _, _ = cv2.calibrateCamera(self.object_points,
-        self.img_points, (img.shape[1], img.shape[0]), None, None)
+        self.img_points, img_shape, None, None)
+    map_x, map_y = cv2.initUndistortRectifyMap(camera_matrix, distortion_coefficients, None,
+        camera_matrix, img_shape, 5)
     self.calibration = {
         'camera_matrix': camera_matrix,
-        'distortion_coefficients': distortion_coefficients }
-    print('Calculated camera calibration')
+        'distortion_coefficients': distortion_coefficients,
+        'image_shape': img_shape,
+        'map_x': map_x.astype(np.float32), # convert from float64 to float32 to avoid weird errors
+        'map_y': map_y.astype(np.float32) }
+    print('Calculated camera calibration.')
 
 
   """
@@ -147,7 +169,7 @@ class CameraCalibrator:
     saves it to the specified file. Then, stores images visualizing the camera calibration in the
     specified directory.
   """
-  def main(self):
+  def get_calibration(self):
     if pathlib.Path(self.camera_calibration_fname).exists():
       self.load_calibration()
     else:
@@ -155,8 +177,12 @@ class CameraCalibrator:
       self.save_calibration()
     self.visualize_calibration()
 
+    return self.calibration
+
 
 if __name__ == '__main__':
+  from pprint import pprint
   cc = CameraCalibrator('camera_calibration/input_images/', 'camera_calibration/output_images/', 9,
       6, 'camera_calibration/camera_calibration.json')
-  cc.main()
+  calibration = cc.get_calibration()
+  pprint(calibration)
