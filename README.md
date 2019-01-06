@@ -1,5 +1,7 @@
 # Advanced Lane Finding
 
+![](media/lane_detection.gif)
+
 ## Setup
 
 Install the project dependencies.
