@@ -103,23 +103,23 @@ class LaneFinder:
     plt.show()
 
 
-  def __init__(self, img_fname):
-    self.img_fname = img_fname
-
-    # Camera calibration
-    self.calibration = { 'camera_matrix': [], 'distortion_coefficients': [] }
-    self.get_calibration()
+  """
+  Constructor for LaneFinder objects. Stores the image filename and camera calibration.
+  """
+  def __init__(self, video_path):
+    self.video_path = video_path
+    self.calibration = self.get_calibration() # camera intrinsics for undistortion
+    self.meters_per_pixel = { 'x': 3.70 / 700, 'y': 30.0 / 720 } # image unit conversion factors
+    self.warping_matrix = None # cache for image perspective warping
 
 
   """
-  Stores the camera calibration dictionary under self.calibration.
+  Stores the camera calibration dictionary under `self.calibration`.
   """
   def get_calibration(self):
     cc = CameraCalibrator('camera_calibration/input_images/', 'camera_calibration/output_images/',
         9, 6, 'camera_calibration/camera_calibration.json')
-    cc.main()
-
-    self.calibration = cc.calibration
+    return cc.get_calibration()
 
 
   """
@@ -128,8 +128,9 @@ class LaneFinder:
   @returns {np.array} - An undistorted version of the input image.
   """
   def undistort(self, img):
-    img_undistorted = cv2.undistort(img, self.calibration['camera_matrix'],
-        self.calibration['distortion_coefficients'], None,  self.calibration['camera_matrix'])
+    img_undistorted = cv2.remap(img, self.calibration['map_x'],
+        self.calibration['map_y'],
+        cv2.INTER_LINEAR)
 
     return img_undistorted
 
@@ -146,12 +147,25 @@ class LaneFinder:
         height_pct=0.375)
     destination_points = self.get_rectangle_shaped_points(img.shape, width_pct=1.000,
         height_pct=1.000)
-    M = cv2.getPerspectiveTransform(source_points, destination_points)
-    img_warped = cv2.warpPerspective(img, M, img.shape[::-1])
+    if self.warping_matrix is None:
+      self.warping_matrix = cv2.getPerspectiveTransform(source_points, destination_points)
+    img_warped = cv2.warpPerspective(img, self.warping_matrix, img.shape[::-1])
     self.draw_points_on_img(img, destination_points, 20, 1)
     self.draw_points_on_img(img, source_points, 10, 1)
 
     return img_warped
+
+
+  """
+  @param {np.array} img - A two-dimensional numpy array image to unwarp.
+  @returns {np.arary} - A two-dimensional numpy array that is version of the input image with the
+    perspective warped. This will undo the warping done in `self.warp`.
+  """
+  def unwarp(self, img_warped):
+    img_unwarped = cv2.warpPerspective(img_warped, np.linalg.inv(self.warping_matrix),
+        img_warped.shape[:2][::-1])
+
+    return img_unwarped
 
 
   """
@@ -194,21 +208,23 @@ class LaneFinder:
   """
   Uses a sliding window method to detect the pixels associated with each of the left and right lane
     lines in an image.
-  @param {np.array} img_bin - A two-dimensional numpy array image binary.
+  @param {np.array} img_bin - A two-dimensional numpy array image binary that shows a top-down view
+    of a set of left and right lane lines.
   @returns {tuple} - A tuple that contains the following: the x index of every pixel determined to be
     part of the left lane line, the y index of every pixel determined to be part of the left lane
     line, the x index of every pixel determined to be part of the right lane line, the y index of
     every pixel determined to be part of the right lane line, and a two-dimensional numpy array
-    with the left lane line drawn in red and the right lane line drawn in blue.
+    image. A modification of `img_bin` with the left lane line drawn in red and the right lane line
+    drawn in blue.
   """
-  def find_lane_pixels(self, img_bin):
+  def get_lane_pixels_from_img_bin(self, img_bin):
     img_height, img_width = img_bin.shape
     # Create an output image to draw on and visualize
     img_detected = np.dstack((img_bin, img_bin, img_bin))
     # Take a histogram of the bottom half of the image
     num_set_pixels_by_column = np.sum(img_bin[img_height // 2:,:], axis=0)
     # Find the peak of the left and right halves of num_set_pixels_by_column. These will be the
-    #   starting point for the left and right lines
+    #   starting point for the left and right lines.
     midpoint = np.int(img_width // 2)
     left_x_start = np.argmax(num_set_pixels_by_column[:midpoint])
     right_x_start = np.argmax(num_set_pixels_by_column[midpoint:]) + midpoint
@@ -229,8 +245,7 @@ class LaneFinder:
     left_lane_pixel_indices = []
     right_lane_pixel_indices = []
 
-    # Iterate over windows from bottom to top
-    for window in range(num_windows):
+    for window in range(num_windows): # iterate over windows from bottom to top
       # Define the current window boundaries (including the margin in the x direction)
       win_y_min = img_height - (window+1)*window_height
       win_y_max = img_height - window*window_height
@@ -239,7 +254,7 @@ class LaneFinder:
       right_lane_win_x_min = curr_right_lane_x - win_margin
       right_lane_win_x_max = curr_right_lane_x + win_margin
 
-      # Draw the windows
+      # Draw the current window
       cv2.rectangle(img_detected, (left_lane_win_x_min, win_y_min), (left_lane_win_x_max,
           win_y_max), (0, 255, 0), 2)
       cv2.rectangle(img_detected, (right_lane_win_x_min, win_y_min), (right_lane_win_x_max,
@@ -253,7 +268,7 @@ class LaneFinder:
           (nonzero_y_indices < win_y_max) & (nonzero_x_indices >= right_lane_win_x_min) &
           (nonzero_x_indices < right_lane_win_x_max)).nonzero()[0]
 
-      # Append these indices to the lists
+      # Keep track of all lane indices
       left_lane_pixel_indices.append(curr_left_lane_pixel_indices)
       right_lane_pixel_indices.append(curr_right_lane_pixel_indices)
 
@@ -267,70 +282,253 @@ class LaneFinder:
     left_lane_pixel_indices = np.concatenate(left_lane_pixel_indices)
     right_lane_pixel_indices = np.concatenate(right_lane_pixel_indices)
 
-    # Extract left and right line pixel positions
-    left_lane_pixel_x_indices = nonzero_x_indices[left_lane_pixel_indices]
-    left_lane_pixel_y_indices = nonzero_y_indices[left_lane_pixel_indices]
-    right_lane_pixel_x_indices = nonzero_x_indices[right_lane_pixel_indices]
-    right_lane_pixel_y_indices = nonzero_y_indices[right_lane_pixel_indices]
+    # Extract left lane line and right lane line pixels
+    left_lane_pixels_x = nonzero_x_indices[left_lane_pixel_indices]
+    left_lane_pixels_y = nonzero_y_indices[left_lane_pixel_indices]
+    right_lane_pixels_x = nonzero_x_indices[right_lane_pixel_indices]
+    right_lane_pixels_y = nonzero_y_indices[right_lane_pixel_indices]
 
     # Color pixels that make up each lane
-    img_detected[left_lane_pixel_y_indices, left_lane_pixel_x_indices] = (255, 0, 0)
-    img_detected[right_lane_pixel_y_indices, right_lane_pixel_x_indices] = (0, 100, 255)
+    img_detected[left_lane_pixels_y, left_lane_pixels_x] = (255, 0, 0)
+    img_detected[right_lane_pixels_y, right_lane_pixels_x] = (0, 100, 255)
 
-    return left_lane_pixel_x_indices, left_lane_pixel_y_indices, right_lane_pixel_x_indices, \
-        right_lane_pixel_y_indices, img_detected
+    return (left_lane_pixels_x, left_lane_pixels_y, right_lane_pixels_x,
+        right_lane_pixels_y, img_detected)
+
+
+  """
+  Fits a second order polynomial to both the array of left lane line pixels and the array right lane
+    line pixels.
+  @param {np.array} left_lane_pixels_x - A numpy array that contains the x indices of the pixels
+    that make up the left lane.
+  @param {np.array} left_lane_pixels_y - A numpy array that contains the y indices of the pixels
+    that make up the left lane.
+  @param {np.array} right_lane_pixels_x - A numpy array that contains the x indices of the pixels
+    that make up the right lane.
+  @param {np.array} right_lane_pixels_y - A numpy array that contains the y indices of the pixels
+    that make up the right lane.
+  @return {tuple} - A tuple that contains: a three-element tuple of the polynomial coefficients
+    that fit the left lane line, and a three-element tuple of the polynomial coefficients that fit
+    the right lane line.
+  """
+  def get_poly_coeffs_from_lane_pixels(self, left_lane_pixels_x, left_lane_pixels_y,
+      right_lane_pixels_x, right_lane_pixels_y):
+    # Fit a second order polynomial to each lane
+    left_lane_poly_coeffs = np.polyfit(left_lane_pixels_y, left_lane_pixels_x, 2)
+    right_lane_poly_coeffs = np.polyfit(right_lane_pixels_y, right_lane_pixels_x, 2)
+
+    return left_lane_poly_coeffs, right_lane_poly_coeffs
+
+
+  """
+  @param {np.array} lane_poly_pixels_y - The input array, each element of which will have an
+    associated output value calculated by running the input through the polynomial function.
+  @param {tuple} - A three-element tuple of the polynomial coefficients that fit the left lane line
+    (2nd order, 1st order, constant).
+  @param {tuple} - A three-element tuple of the polynomial coefficients that fit the right lane
+    line (2nd order, 1st order, constant).
+  @returns {tuple} - A tuple that contains: a numpy array that contains the x indices of the pixels
+    that represent the polynomial that was fit to the left lane, a numpy array that contains the x
+    indices of the pixels that represent the polynomial that was fit to the right lane, and the y
+    indices of the pixels that represent the polynomials that were fit to the lanes.
+  """
+  def get_poly_pixels_from_poly_coeffs(self, lane_poly_pixels_y, left_lane_poly_coeffs,
+      right_lane_poly_coeffs):
+    left_lane_poly_pixels_x = (left_lane_poly_coeffs[0] * lane_poly_pixels_y ** 2 +
+        left_lane_poly_coeffs[1] * lane_poly_pixels_y + left_lane_poly_coeffs[2])
+    right_lane_poly_pixels_x = (right_lane_poly_coeffs[0] * lane_poly_pixels_y ** 2 +
+        right_lane_poly_coeffs[1] * lane_poly_pixels_y + right_lane_poly_coeffs[2])
+
+    return left_lane_poly_pixels_x, right_lane_poly_pixels_x, lane_poly_pixels_y
 
 
   """
   Fits a second order polynomial curve to each of the left and right lane lines.
   @param {np.array} img_bin - A two-dimensional numpy array image binary that shows a top-down view
-    of a left and right lane line.
-  @returns {np.array} - A two-dimensional numpy array image binary with a polynomial line fit and
-    drawn on each of the left and right lane lines.
+    of a set of left and right lane lines.
+  @returns {tuple} - A tuple that contains: a numpy array of pixels (x, y) that make up the
+    polynomial that was fit to the left lane line, a numpy array of pixels (x, y) that make up the
+    polynomial that was fit to the right lane line, and a two-dimensional numpy array image binary
+    with a polynomial line fit and drawn on each of the left and right lane lines.
   """
-  def fit_polynomials_to_lane_lines(self, img_bin):
+  def get_poly_coeffs_from_img_bin(self, img_bin):
     # Find the pixels that make up each lane
-    left_lane_pixel_x_indices, left_lane_pixel_y_indices, right_lane_pixel_x_indices, \
-        right_lane_pixel_y_indices, img_detected = self.find_lane_pixels(img_bin)
+    (left_lane_pixels_x, left_lane_pixels_y, right_lane_pixels_x,
+        right_lane_pixels_y, img_detected) = self.get_lane_pixels_from_img_bin(img_bin)
 
-    # Fit a second order polynomial to each lane
-    left_lane_fit = np.polyfit(left_lane_pixel_y_indices, left_lane_pixel_x_indices, 2)
-    right_lane_fit = np.polyfit(right_lane_pixel_y_indices, right_lane_pixel_x_indices, 2)
+    # Fit polynomials to the lane lines
+    left_lane_poly_coeffs, right_lane_poly_coeffs = \
+        self.get_poly_coeffs_from_lane_pixels(left_lane_pixels_x, left_lane_pixels_y,
+        right_lane_pixels_x, right_lane_pixels_y)
 
-    # Generate x and y values for plotting
-    ploty = np.linspace(0, img_bin.shape[0]-1, img_bin.shape[0] )
-    try:
-      left_fitx = left_lane_fit[0]*ploty**2 + left_lane_fit[1]*ploty + left_lane_fit[2]
-      right_fitx = right_lane_fit[0]*ploty**2 + right_lane_fit[1]*ploty + right_lane_fit[2]
-    except TypeError: # if left_fitx and right_fitx are still None
-      print('The function failed to fit a line!')
-      left_fitx = 1*ploty**2 + 1*ploty
-      right_fitx = 1*ploty**2 + 1*ploty
+    # Get the pixels that exist ontop of the fitted polynomials
+    left_lane_poly_pixels_x, right_lane_poly_pixels_x, lane_poly_pixels_y = \
+        self.get_poly_pixels_from_poly_coeffs(np.linspace(0, img_bin.shape[0]-1, img_bin.shape[0]),
+        left_lane_poly_coeffs, right_lane_poly_coeffs)
 
     # Draw the polynomial lines that are fit to each lane
-    left_lane_points = np.dstack((left_fitx, ploty)).astype(int)
-    right_lane_points = np.dstack((right_fitx, ploty)).astype(int)
-    cv2.polylines(img_detected, [left_lane_points, right_lane_points], isClosed=False,
+    left_lane_poly_pixels = np.dstack((left_lane_poly_pixels_x, lane_poly_pixels_y)).astype(int)
+    right_lane_poly_pixels = np.dstack((right_lane_poly_pixels_x, lane_poly_pixels_y)).astype(int)
+    cv2.polylines(img_detected, [left_lane_poly_pixels, right_lane_poly_pixels], isClosed=False,
         color=(255, 255, 255), thickness=10)
 
-    return img_detected
+    return left_lane_poly_coeffs, right_lane_poly_coeffs, img_detected
+
+
+  """
+  @param {np.array} img_bin - A two-dimensional numpy array image binary that shows a top-down view
+    of a set of left and right lane lines.
+  @param {np.array} prev_left_lane_poly_pixels - A numpy array of pixels (x, y) that make up the
+    polynomial that was fit to the left lane line in the previous video frame.
+  @param {np.array} prev_right_lane_poly_pixels - A numpy array of pixels (x, y) that make up the
+    polynomial that was fit to the right lane line in the previous video frame.
+  """
+  def get_poly_coeffs_from_img_bin_and_prev_poly_coeffs(self, img_bin, prev_left_lane_poly_coeffs,
+      prev_right_lane_poly_coeffs):
+    # Create an output image to draw on and visualize
+    img_detected = np.dstack((img_bin, img_bin, img_bin)) * 255
+
+    margin = 100 # margin width around previous polynomail to search for lane line pixels
+
+    # Identify the x and y indices of all nonzero pixels in the image
+    nonzero_y_indices, nonzero_x_indices = img_bin.nonzero()
+
+    # Get the pixels that exist ontop of the previously fitted polynomials
+    prev_left_lane_poly_pixels_x, prev_right_lane_poly_pixels_x, prev_lane_poly_pixels_y = \
+        self.get_poly_pixels_from_poly_coeffs(nonzero_y_indices, prev_left_lane_poly_coeffs,
+        prev_right_lane_poly_coeffs)
+
+    # Define the points that make up the edges of the search windows for the current lane lines
+    left_lane_win_min_x = prev_left_lane_poly_pixels_x - margin
+    left_lane_win_max_x = prev_left_lane_poly_pixels_x + margin
+    left_lane_win_min = np.stack((left_lane_win_min_x, prev_lane_poly_pixels_y), axis=1)
+    left_lane_win_max = np.flipud(np.stack((left_lane_win_max_x, prev_lane_poly_pixels_y), axis=1))
+    left_lane_win = np.vstack((left_lane_win_min, left_lane_win_max))
+    right_lane_win_min_x = prev_right_lane_poly_pixels_x - margin
+    right_lane_win_max_x = prev_right_lane_poly_pixels_x + margin
+    right_lane_win_min = np.stack((right_lane_win_min_x, prev_lane_poly_pixels_y), axis=1)
+    right_lane_win_max = np.flipud(np.stack((right_lane_win_max_x, prev_lane_poly_pixels_y),
+        axis=1))
+    right_lane_win = np.vstack((right_lane_win_min, right_lane_win_max))
+
+    # Draw the search window for finding the current lane lines
+    img_win = np.zeros_like(img_detected)
+    cv2.fillPoly(img_win, np.int32([left_lane_win, right_lane_win]), (0, 255, 0))
+    img_detected = cv2.addWeighted(img_detected, 1.0, img_win, 0.3, 0)
+
+    # Get indices of nonzero pixels within the margin window from the previous fitted polynomials
+    left_lane_pixel_indices = ((nonzero_x_indices > left_lane_win_min_x) &
+        (nonzero_x_indices < left_lane_win_max_x))
+    right_lane_pixel_indices = ((nonzero_x_indices > right_lane_win_min_x) &
+        (nonzero_x_indices < right_lane_win_max_x))
+
+    # Extract left lane line and right lane line pixels using nonzero indices
+    left_lane_pixels_x = nonzero_x_indices[left_lane_pixel_indices]
+    left_lane_pixels_y = nonzero_y_indices[left_lane_pixel_indices]
+    right_lane_pixels_x = nonzero_x_indices[right_lane_pixel_indices]
+    right_lane_pixels_y = nonzero_y_indices[right_lane_pixel_indices]
+
+    # Draw color in the pixels that make up each lane
+    img_detected[left_lane_pixels_y, left_lane_pixels_x] = (255, 0, 0)
+    img_detected[right_lane_pixels_y, right_lane_pixels_x] = (0, 100, 255)
+
+    # Get the coefficients of the new fitted polynomials for each lane line
+    left_lane_poly_coeffs, right_lane_poly_coeffs = \
+        self.get_poly_coeffs_from_lane_pixels(left_lane_pixels_x, left_lane_pixels_y,
+        right_lane_pixels_x, right_lane_pixels_y)
+
+    # Get the pixels that make up the newly fitted polynomials
+    left_lane_poly_pixels_x, right_lane_poly_pixels_x, lane_poly_pixels_y = \
+        self.get_poly_pixels_from_poly_coeffs(np.linspace(0, img_bin.shape[1]-1, img_bin.shape[0]),
+        left_lane_poly_coeffs, right_lane_poly_coeffs)
+
+    # Draw the polynomial lines that are fit to each lane
+    left_lane_poly_pixels = np.dstack((left_lane_poly_pixels_x, lane_poly_pixels_y)).astype(int)
+    right_lane_poly_pixels = np.dstack((right_lane_poly_pixels_x, lane_poly_pixels_y)).astype(int)
+    cv2.polylines(img_detected, [left_lane_poly_pixels, right_lane_poly_pixels], isClosed=False,
+        color=(255, 255, 255), thickness=10)
+
+    return left_lane_poly_coeffs, right_lane_poly_coeffs, img_detected
+
+
+  def get_curvature_radii_from_poly_coeffs(self, y_evaluation_index, left_lane_poly_coeffs,
+      right_lane_poly_coeffs):
+    # Some math, where w=self.meters_per_pixel['x'] and h=self.meters_per_pixel['y'].
+    # x/w = (a)*(y/h)^2 + (b)*(y/h) + (c)
+    # x/w = (a/h^2)*(y)^2 + (b/h)*(y) + (c)
+    # x = (a*w/h^2)*(y)^2 + (b*w/h)*(y) + (c*w)
+    left_lane_poly_meter_coeffs = [(left_lane_poly_coeffs[0] * self.meters_per_pixel['x'] /
+        self.meters_per_pixel['y'] ** 2), (left_lane_poly_coeffs[1] * self.meters_per_pixel['x'] /
+        self.meters_per_pixel['y']), (left_lane_poly_coeffs[2] * self.meters_per_pixel['x'])]
+    right_lane_poly_meter_coeffs = [(right_lane_poly_coeffs[0] * self.meters_per_pixel['x'] /
+        self.meters_per_pixel['y'] ** 2), (right_lane_poly_coeffs[1] * self.meters_per_pixel['x'] /
+        self.meters_per_pixel['y']), (right_lane_poly_coeffs[2] * self.meters_per_pixel['x'])]
+
+    # Calculate lane curvature
+    left_lane_curvature_radius = (((1 + (2 * left_lane_poly_meter_coeffs[0] * y_evaluation_index *
+        self.meters_per_pixel['y'] + left_lane_poly_meter_coeffs[1]) ** 2) ** 1.5) /
+        np.absolute(2 * left_lane_poly_meter_coeffs[0]))
+    right_lane_curvature_radius = (((1 + (2 * right_lane_poly_meter_coeffs[0] * y_evaluation_index *
+        self.meters_per_pixel['y'] + right_lane_poly_meter_coeffs[1]) ** 2) ** 1.5) /
+        np.absolute(2 * right_lane_poly_meter_coeffs[0]))
+
+    return left_lane_curvature_radius, right_lane_curvature_radius
 
 
   def main(self):
-    img = cv2.cvtColor(cv2.imread(self.img_fname), cv2.COLOR_BGR2RGB)
-    img_undistorted = self.undistort(img)
-    img_thresholded = self.threshold(img_undistorted)
-    img_warped = self.warp(img_thresholded)
-    img_lanes_detected = self.fit_polynomials_to_lane_lines(img_warped)
+    # The polynomials fitted to the lane lines in the previous video frame will be useful in finding
+    #   the lane lines in the current video frame.
+    prev_left_lane_poly_coeffs = None
+    prev_right_lane_poly_coeffs = None
 
-    self.plot_images([
-      { 'img': img, 'title': 'Original' },
-      { 'img': img_undistorted, 'title': 'Undistorted' },
-      { 'img': img_thresholded, 'title': 'Thresholded', 'cmap': 'gray' },
-      { 'img': img_warped, 'title': 'Warped', 'cmap': 'gray' },
-      { 'img': img_lanes_detected, 'title': 'Lanes Detected' }])
+    cap = cv2.VideoCapture(self.video_path) # open the video stream
+    while cap.isOpened(): # while there is another frame of the video to look at
+      ret, img = cap.read()
+      if ret != True:
+        break
+
+      img_undistorted = self.undistort(img)
+      img_thresholded = self.threshold(img_undistorted)
+      img_warped = self.warp(img_thresholded)
+      if prev_left_lane_poly_coeffs is not None and prev_right_lane_poly_coeffs is not None:
+        left_lane_poly_coeffs, right_lane_poly_coeffs, img_lane_lines_detected = \
+            self.get_poly_coeffs_from_img_bin_and_prev_poly_coeffs(img_warped,
+            prev_left_lane_poly_coeffs, prev_right_lane_poly_coeffs)
+      else:
+        left_lane_poly_coeffs, right_lane_poly_coeffs, img_lane_lines_detected = \
+            self.get_poly_coeffs_from_img_bin(img_warped)
+
+      img_lane_lines_detected_unwarped = self.unwarp(img_lane_lines_detected)
+      img_lane_lines_detected_unwarped = cv2.addWeighted(img_undistorted, 1.0,
+          img_lane_lines_detected_unwarped, 1.0, 0)
+
+      left_lane_curvature_radius, right_lane_curvature_radius = \
+          self.get_curvature_radii_from_poly_coeffs(img_lane_lines_detected.shape[0],
+          left_lane_poly_coeffs, right_lane_poly_coeffs)
+
+      # Visualize
+      cv2.imshow('video', np.concatenate((cv2.resize(img_undistorted, None, fx=0.5, fy=0.5),
+          cv2.resize(img_lane_lines_detected, None, fx=0.5, fy=0.5),
+          cv2.resize(img_lane_lines_detected_unwarped, None, fx=0.5, fy=0.5)), axis=1))
+
+      # Update previous lane line fitted polynomial coefficients
+      prev_left_lane_poly_coeffs = left_lane_poly_coeffs
+      prev_right_lane_poly_coeffs = right_lane_poly_coeffs
+
+      if cv2.waitKey(25) & 0xFF == ord('q'): # press q to exit
+        break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+      # self.plot_images([
+      #   { 'img': img, 'title': 'Original' },
+      #   { 'img': img_undistorted, 'title': 'Undistorted' },
+      #   { 'img': img_thresholded, 'title': 'Thresholded', 'cmap': 'gray' },
+      #   { 'img': img_warped, 'title': 'Warped', 'cmap': 'gray' },
+      #   { 'img': img_lane_lines_detected, 'title': 'Lanes Detected' }])
 
 
 if __name__ == '__main__':
-  lf = LaneFinder('media/test_input_images/straight_lines_1.jpg')
+  lf = LaneFinder('media/test_input_videos/project_video.mp4')
   lf.main()
