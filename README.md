@@ -16,3 +16,11 @@ dependencies installed above.
 ```bash
 $ pipenv shell
 ```
+
+## Run
+
+Run the lane finder from the pipenv shell you spawned above.
+
+```bash
+python src/lane_finder.py
+```

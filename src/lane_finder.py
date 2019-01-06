@@ -608,5 +608,5 @@ class LaneFinder:
 
 
 if __name__ == '__main__':
-  lf = LaneFinder(video_path='media/test_input_videos/project_video.mp4', debug=True)
+  lf = LaneFinder(video_path='media/test_input_videos/project_video.mp4', debug=False)
   lf.main()
