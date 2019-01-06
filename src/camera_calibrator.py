@@ -26,11 +26,11 @@ class CameraCalibrator:
   @param calibration_input_images_dir {string}: The directory to read calibration input images from.
   @param calibration_output_images_dir {string}: The directory to write calibration output images
     to.
-  @param num_corners_x {int}: The number of corners in the x direction on the checkerboard in the
+  @param {int} num_corners_x - The number of corners in the x direction on the checkerboard in the
     calibration input images.
-  @param num_corners_y {int}: The number of corners in the y direction on the checkerboard in the
+  @param {int} num_corners_y - The number of corners in the y direction on the checkerboard in the
     calibration input images.
-  @param camera_calibration_fname {string}: The name of the file to save / load the camera
+  @param {string} camera_calibration_fname - The name of the file to save / load the camera
     calibration to / from.
   """
   def __init__(self, calibration_input_images_dir, calibration_output_images_dir, num_corners_x,
@@ -109,8 +109,6 @@ class CameraCalibrator:
 
         # Draw and display the corners
         cv2.drawChessboardCorners(img, (self.num_corners_x, self.num_corners_y), corners, ret)
-        #write_name = 'corners_found'+str(idx)+'.jpg'
-        #cv2.imwrite(write_name, img)
         cv2.imshow(img_name, img)
         cv2.waitKey(500)
     cv2.destroyAllWindows()
