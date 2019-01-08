@@ -3,12 +3,13 @@ import math
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import pathlib
+import sys
 
 from camera_calibrator import CameraCalibrator
 
 
 class LaneFinder:
-
   """
   To be used for getting the destination points when warping image perspective.
   @param {tuple} img_size - A tuple with two elements (y size, x size).
@@ -78,11 +79,16 @@ class LaneFinder:
   """
   Constructor for LaneFinder objects. Stores the image filename and camera calibration.
   @param {str} video_path - A path to the video that should be processed for lane detection.
-  @param {bool} debug - True to see additional visualization.
+  @param {str} [output_path=None] - A path to where the output video should be written to. If
+    `output_path` is set to `None` or is not specified, then no output video will be written.
+  @param {bool} [debug=False] - True to see additional visualization.
   """
-  def __init__(self, video_path, debug):
-    self.video_path = video_path
-    self.debug = debug # toggle more visualization
+  def __init__(self, video_path, output_path=None, debug=False):
+    self.video_path = pathlib.Path(video_path)
+    if not self.video_path.exists(): # exit if the specified `video_path` does not exist
+      sys.exit('ERROR: video path does not exist: {}'.format(self.video_path))
+    self.output_path = pathlib.Path(output_path) if output_path else None
+    self.debug = debug # visualize more steps of the pipeline if set to true
     self.calibration = self.get_calibration() # camera intrinsics for undistortion
     self.meters_per_pixel = { 'x': 3.70 / 700, 'y': 30.0 / 720 } # image unit conversion factors
     self.warping_matrix = None # cache for image perspective warping
@@ -599,7 +605,10 @@ class LaneFinder:
     prev_left_lane_poly_coeffs = None
     prev_right_lane_poly_coeffs = None
 
-    cap = cv2.VideoCapture(self.video_path) # open the video stream
+    cap = cv2.VideoCapture(str(self.video_path)) # open the video stream
+    if self.output_path is not None:
+      video_codec = cv2.VideoWriter_fourcc(*'XVID')
+      video_writer = cv2.VideoWriter(str(self.output_path), video_codec, 20.0, (1281 * 2, 721))
     while cap.isOpened(): # while there is another frame of the video to look at
       ret, img = cap.read()
       if ret != True:
@@ -642,8 +651,10 @@ class LaneFinder:
           { 'img': cv2.cvtColor(img_lane_detected, cv2.COLOR_BGR2RGB), 'title': 'Lane Detected' }],
           plot_duration=0.25)
       else:
-        cv2.imshow('video', np.hstack((cv2.resize(img_lane_detected, None, fx=0.5, fy=0.5),
-            cv2.resize(img_lane_lines_detected, None, fx=0.5, fy=0.5))))
+        img_final = np.hstack((img_lane_detected, img_lane_lines_detected))
+        cv2.imshow('video', cv2.resize(img_final, None, fx=0.5, fy=0.5))
+        if self.output_path is not None:
+          video_writer.write(img_final)
 
       # Update previous lane line fitted polynomial coefficients to use in next search
       prev_left_lane_poly_coeffs = left_lane_poly_coeffs
@@ -654,9 +665,24 @@ class LaneFinder:
         break
 
     cap.release()
+    if self.output_path is not None:
+      video_writer.release()
     cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
-  lf = LaneFinder(video_path='media/test_input_videos/project_video.mp4', debug=False)
+  import argparse
+
+  # Get command line arguments
+  parser = argparse.ArgumentParser(description='Find the lane in a video stream.')
+  parser.add_argument('--video-path', required=True,  help='The path to the video that should be'
+    ' processed. A good option would be `media/test_input_videos/project_video.mp4`.')
+  parser.add_argument('--output-path', help='If set, then the processed video stream will be'
+    ' written to the specified path. A good option would be `media/test_output_videos/<name>.avi`.')
+  parser.add_argument('--debug', action='store_true', help='Set debug mode. Shows more'
+    ' visualizations of the different steps in the lane detection pipeline.')
+  args = parser.parse_args()
+
+  # Create a LaneFinder object and run the main function with the command line arguments
+  lf = LaneFinder(args.video_path, args.output_path, args.debug)
   lf.main()

@@ -19,10 +19,10 @@ $ pipenv shell
 
 ## Run
 
-Run the lane finder from the pipenv shell you spawned above.
+Show the help menu for command line arguments to run the lane finder.
 
 ```bash
-python src/lane_finder.py
+python src/lane_finder.py --help
 ```
 
 ## Writeup
