@@ -480,10 +480,10 @@ class LaneFinder:
   @param {int} img_shape_y - The height of the image that the polynomial coefficients came from.
     This will be the point that the polynomial function is evaluated at for curvature (effectively,
     the bottom of the image).
-  @param {tuple} left_lane_poly_coeffs- A three-element tuple of the polynomial coefficients that
-    fit the left lane line (2nd order, 1st order, constant).
-  @param {tuple} right_lane_poly_coeffs - A three-element tuple of the polynomial coefficients that
-    fit the right lane line (2nd order, 1st order, constant).
+  @param {tuple} left_lane_poly_coeffs- A three-element tuple of the polynomial coefficients (2nd
+    order, 1st order, constant) that fit the left lane line in pixels.
+  @param {tuple} right_lane_poly_coeffs- A three-element tuple of the polynomial coefficients (2nd
+    order, 1st order, constant) that fit the right lane line in pixels.
   @returns {tuple} - A tuple that contains: the curvature of the left lane line in meters and the
     curvature of the right lane line in meters.
   """
@@ -514,6 +514,35 @@ class LaneFinder:
 
 
   """
+  @param {int} img_shape_y - The height of the image that the polynomial coefficients came from.
+    This will be the point that the polynomial function is evaluated at for curvature (effectively,
+    the bottom of the image).
+  @param {tuple} left_lane_poly_coeffs- A three-element tuple of the polynomial coefficients (2nd
+    order, 1st order, constant) that fit the left lane line in pixels.
+  @param {tuple} right_lane_poly_coeffs- A three-element tuple of the polynomial coefficients (2nd
+    order, 1st order, constant) that fit the right lane line in pixels.
+  @returns {float} - The relative offset between the car and the center of the detected lane in the
+    x direction in meters. A positive offset means the car is too far right.
+  """
+  def get_car_to_lane_offset(self, img_shape, left_lane_poly_coeffs, right_lane_poly_coeffs):
+    # Get the center of the car, which is also the center of the image
+    center_of_car_x_pixels = img_shape[1] / 2
+
+    # Get the center of the bottom of the lane
+    left_bottom_of_lane_x_pixels = (left_lane_poly_coeffs[0] * img_shape[0] ** 2 +
+      left_lane_poly_coeffs[1] * img_shape[0] + left_lane_poly_coeffs[2])
+    right_bottom_of_lane_x_pixels = (right_lane_poly_coeffs[0] * img_shape[0] ** 2 +
+      right_lane_poly_coeffs[1] * img_shape[0] + right_lane_poly_coeffs[2])
+    center_of_lane_x_pixels = (left_bottom_of_lane_x_pixels + right_bottom_of_lane_x_pixels) / 2
+
+    # Get the distance between the car and the lane in meters
+    car_to_lane_offset_pixels = center_of_car_x_pixels - center_of_lane_x_pixels
+    car_to_lane_offset_meters = car_to_lane_offset_pixels * self.meters_per_pixel['x']
+
+    return car_to_lane_offset_meters
+
+
+  """
   @param {np.array} img_unwarped - A two-dimensional numpy array image to overlay with the drawn
     lane polygon.
   @param {np.arary} img_warped - A two-dimensional numpy array image used to determine how to draw
@@ -525,7 +554,8 @@ class LaneFinder:
   @returns {np.array} - A two-dimensional numpy array image with the road polygon overlayed on top
     of `img_unwarped`.
   """
-  def draw_lane(self, img_unwarped, img_warped, left_lane_poly_coeffs, right_lane_poly_coeffs):
+  def draw_lane(self, img_unwarped, img_warped, left_lane_poly_coeffs, right_lane_poly_coeffs,
+      left_lane_curvature_radius, right_lane_curvature_radius, car_to_lane_offset):
     # Get the pixels that define the left and right edges of the lane
     left_lane_poly_pixels_x, right_lane_poly_pixels_x, lane_poly_pixels_y = \
         self.get_poly_pixels_from_poly_coeffs(np.linspace(0, img_warped.shape[0] - 1,
@@ -540,6 +570,21 @@ class LaneFinder:
     cv2.fillPoly(img_lane_polygon_warped, np.int32([lane_poly_pixels]), (0, 255, 0))
     img_lane_polygon_unwarped = self.unwarp(img_lane_polygon_warped)
     img_lane_detected = cv2.addWeighted(img_unwarped, 1.0, img_lane_polygon_unwarped, 0.3, 0)
+
+    # Calculate the average curvature radius of the two lane lines
+    curvature_radius = (left_lane_curvature_radius + right_lane_curvature_radius) / 2
+
+    # Draw the text that displays the radius of curvature and the car to lane offset
+    font_face = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.5
+    font_color = (255, 255, 255)
+    font_thickness = 3
+    curvature_text = 'Radius of Curvature: {:4.2f}m'.format(curvature_radius)
+    lane_offset_text = 'Car to Lane Offset: {:4.2f}m'.format(car_to_lane_offset)
+    cv2.putText(img_lane_detected, curvature_text, (25, 50), font_face, font_scale, font_color,
+        font_thickness)
+    cv2.putText(img_lane_detected, lane_offset_text, (25, 100), font_face, font_scale, font_color,
+        font_thickness)
 
     return img_lane_detected
 
@@ -574,13 +619,17 @@ class LaneFinder:
       else:
         left_lane_poly_coeffs, right_lane_poly_coeffs, img_lane_lines_detected = \
             self.get_poly_coeffs_from_img_bin(img_warped)
-      # Highlight the currently detected lane in the original image
-      img_lane_detected = self.draw_lane(img_undistorted, img_lane_lines_detected,
-          left_lane_poly_coeffs, right_lane_poly_coeffs)
       # Get lane line curvature
       left_lane_curvature_radius, right_lane_curvature_radius = \
           self.get_curvature_radii_from_poly_coeffs(img_lane_lines_detected.shape[0],
           left_lane_poly_coeffs, right_lane_poly_coeffs)
+      # Get the x axis offset between the car and the detected lane
+      car_to_lane_offset = self.get_car_to_lane_offset(img_lane_lines_detected.shape,
+          left_lane_poly_coeffs, right_lane_poly_coeffs)
+      # Highlight the currently detected lane in the original image
+      img_lane_detected = self.draw_lane(img_undistorted, img_lane_lines_detected,
+          left_lane_poly_coeffs, right_lane_poly_coeffs, left_lane_curvature_radius,
+          right_lane_curvature_radius, car_to_lane_offset)
 
       # Visualize
       if self.debug:
@@ -600,7 +649,8 @@ class LaneFinder:
       prev_left_lane_poly_coeffs = left_lane_poly_coeffs
       prev_right_lane_poly_coeffs = right_lane_poly_coeffs
 
-      if cv2.waitKey(25) & 0xFF == ord('q'): # press q to exit
+      # Show each frame for 25 milliseconds and if the user presses the 'q' key, then exit
+      if cv2.waitKey(25) & 0xFF == ord('q'):
         break
 
     cap.release()
@@ -608,5 +658,5 @@ class LaneFinder:
 
 
 if __name__ == '__main__':
-  lf = LaneFinder(video_path='media/test_input_videos/project_video.mp4', debug=True)
+  lf = LaneFinder(video_path='media/test_input_videos/project_video.mp4', debug=False)
   lf.main()
