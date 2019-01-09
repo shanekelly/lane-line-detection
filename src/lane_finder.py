@@ -11,6 +11,19 @@ from camera_calibrator import CameraCalibrator
 
 class LaneFinder:
   """
+  @param {pathlib.Path} media_path - A Path to some type of media (either a video or image).
+  @return {str} - Either 'video' or 'image', based on the filetype extension of `media_path`.
+  """
+  @staticmethod
+  def get_media_type(media_path):
+    if media_path.suffix in ('.mp4', '.avi'):
+      return 'video'
+    elif media_path.suffix in ('.png', '.jpg'):
+      return 'image'
+    sys.exit('ERROR: input path has an unrecognized extension: {}'.format(media_path.suffix))
+
+
+  """
   To be used for getting the destination points when warping image perspective.
   @param {tuple} img_size - A tuple with two elements (y size, x size).
   @param {float} top_width_pct - The length of the top side of the road, as a percentage of
@@ -78,21 +91,25 @@ class LaneFinder:
 
   """
   Constructor for LaneFinder objects. Stores the image filename and camera calibration.
-  @param {str} video_path - A path to the video that should be processed for lane detection.
-  @param {str} [output_path=None] - A path to where the output video should be written to. If
-    `output_path` is set to `None` or is not specified, then no output video will be written.
-  @param {bool} [debug=False] - True to see additional visualization.
+  @param {str} input_media_path - A path to the video that should be processed for lane detection.
+  @param {str} [output_media_path=None] - A path to where the output video should be written to. If
+    `output_media_path` is set to `None` or is not specified, then no output video will be written.
+  @param {bool} [debug=False] - True to visualize additional steps in the lane detection pipeline.
   """
-  def __init__(self, video_path, output_path=None, debug=False):
-    self.video_path = pathlib.Path(video_path)
-    if not self.video_path.exists(): # exit if the specified `video_path` does not exist
-      sys.exit('ERROR: video path does not exist: {}'.format(self.video_path))
-    self.output_path = pathlib.Path(output_path) if output_path else None
+  def __init__(self, input_media_path, output_media_path=None, debug=False):
+    self.input_media_path = pathlib.Path(input_media_path)
+    if not self.input_media_path.exists(): # exit if the specified `input_media_path` does not exist
+      sys.exit('ERROR: video path does not exist: {}'.format(self.input_media_path))
+
+    self.input_media_type = self.get_media_type(self.input_media_path)
+    self.output_media_path = pathlib.Path(output_media_path) if output_media_path else None
+
     self.debug = debug # visualize more steps of the pipeline if set to true
+
     self.calibration = self.get_calibration() # camera intrinsics for undistortion
     self.meters_per_pixel = { 'x': 3.70 / 700, 'y': 30.0 / 720 } # image unit conversion factors
-    self.warping_matrix = None # cache for image perspective warping
 
+    self.warping_matrix = None # cache for image perspective warping
     if self.debug:
       self.plot_fig = None # figure for smooth plotting
 
@@ -173,7 +190,7 @@ class LaneFinder:
     #   the vertices of the image.
     source_points = self.get_road_shaped_points(img.shape, top_width_pct=0.100, bot_width_pct=1.000,
         height_pct=0.375)
-    destination_points = self.get_rectangle_shaped_points(img.shape, width_pct=1.000,
+    destination_points = self.get_rectangle_shaped_points(img.shape, width_pct=0.750,
         height_pct=1.000)
     if self.warping_matrix is None:
       self.warping_matrix = cv2.getPerspectiveTransform(source_points, destination_points)
@@ -208,7 +225,6 @@ class LaneFinder:
     img_gradient_x = cv2.Sobel(img_gray, cv2.CV_64F, 1, 0) # derivative in x direction
     img_gradient_x = np.absolute(img_gradient_x) # absolute value
     img_gradient_x = np.uint8(img_gradient_x * (255 / np.max(img_gradient_x))) # scale from 0 to 255
-
     # Threshold x gradient
     gradient_thresh_min = 20
     gradient_thresh_max = 100
@@ -219,16 +235,24 @@ class LaneFinder:
     # Convert to HLS color space and separate the S channel
     img_hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
     s_channel = img_hls[:,:,2]
-
     # Threshold the saturation color channel
     s_thresh_min = 170
     s_thresh_max = 255
     img_s_bin = np.zeros_like(s_channel)
     img_s_bin[(s_channel >= s_thresh_min) & (s_channel <= s_thresh_max)] = 1
 
+    # Convert to LUV color space and separate the L channel
+    img_luv = cv2.cvtColor(img, cv2.COLOR_RGB2LUV)
+    l_channel = img_luv[:,:,0]
+    # Threshold the L color channel
+    l_thresh_min = 195
+    l_thresh_max = 255
+    img_l_bin = np.zeros_like(l_channel)
+    img_l_bin[(l_channel >= l_thresh_min) & (l_channel <= l_thresh_max)] = 1
+
     # Combine the two binary images
     img_thresholded_bin = np.zeros_like(img_gradient_x_bin)
-    img_thresholded_bin[(img_s_bin == 1) | (img_gradient_x_bin == 1)] = 1
+    img_thresholded_bin[(img_gradient_x_bin == 1) | (img_s_bin == 1) | (img_l_bin == 1)] = 1
 
     return img_thresholded_bin
 
@@ -605,14 +629,22 @@ class LaneFinder:
     prev_left_lane_poly_coeffs = None
     prev_right_lane_poly_coeffs = None
 
-    cap = cv2.VideoCapture(str(self.video_path)) # open the video stream
-    if self.output_path is not None:
-      video_codec = cv2.VideoWriter_fourcc(*'XVID')
-      video_writer = cv2.VideoWriter(str(self.output_path), video_codec, 20.0, (1281 * 2, 721))
-    while cap.isOpened(): # while there is another frame of the video to look at
-      ret, img = cap.read()
-      if ret != True:
-        break
+    if self.input_media_type is 'video':
+      video_reader = cv2.VideoCapture(str(self.input_media_path)) # open the video stream
+
+    if self.output_media_path is not None:
+      if self.input_media_type is 'video':
+        video_codec = cv2.VideoWriter_fourcc(*'XVID')
+        video_writer = cv2.VideoWriter(str(self.output_media_path), video_codec, 20.0, (1281 * 2, 721))
+
+    keep_looping = True
+    while keep_looping: # while there is another frame of the input media to look at
+      if self.input_media_type is 'video':
+        ret, img = video_reader.read()
+        if ret != True:
+          break
+      else: # self.input_media_type is 'image'
+        img = cv2.imread(str(self.input_media_path))
 
       # Remove image distortion based on camera intrinsics
       img_undistorted = self.undistort(img)
@@ -639,35 +671,48 @@ class LaneFinder:
       img_lane_detected = self.draw_lane(img_undistorted, img_lane_lines_detected,
           left_lane_poly_coeffs, right_lane_poly_coeffs, left_lane_curvature_radius,
           right_lane_curvature_radius, car_to_lane_offset)
-
-      # Visualize
-      if self.debug:
-        self.plot_images([
-          { 'img': cv2.cvtColor(img, cv2.COLOR_BGR2RGB), 'title': 'Original' },
-          { 'img': cv2.cvtColor(img_undistorted, cv2.COLOR_BGR2RGB), 'title': 'Undistorted' },
-          { 'img': img_thresholded, 'title': 'Thresholded', 'cmap': 'gray' },
-          { 'img': img_warped, 'title': 'Warped', 'cmap': 'gray' },
-          { 'img': img_lane_lines_detected, 'title': 'Lanes Lines Detected' },
-          { 'img': cv2.cvtColor(img_lane_detected, cv2.COLOR_BGR2RGB), 'title': 'Lane Detected' }],
-          plot_duration=0.25)
-      else:
-        img_final = np.hstack((img_lane_detected, img_lane_lines_detected))
-        cv2.imshow('video', cv2.resize(img_final, None, fx=0.5, fy=0.5))
-        if self.output_path is not None:
-          video_writer.write(img_final)
-
       # Update previous lane line fitted polynomial coefficients to use in next search
       prev_left_lane_poly_coeffs = left_lane_poly_coeffs
       prev_right_lane_poly_coeffs = right_lane_poly_coeffs
 
-      # Show each frame for 25 milliseconds and if the user presses the 'q' key, then exit
-      if cv2.waitKey(25) & 0xFF == ord('q'):
+      # Visualize
+      if self.debug:
+        # Format images so they can all be merged next to each other and displayed
+        img = cv2.resize(img, (img.shape[1] + 1, img.shape[0] + 1))
+        img_thresholded = np.dstack((img_thresholded, img_thresholded, img_thresholded)) * 255
+        img_warped = np.dstack((img_warped, img_warped, img_warped)) * 255
+        img_final = np.vstack((np.hstack((img, img_undistorted, img_thresholded)),
+          np.hstack((img_warped, img_lane_lines_detected, img_lane_detected))))
+      else:
+        img_final = np.hstack((img_lane_detected, img_lane_lines_detected))
+
+      cv2.imshow('final_visualization', cv2.resize(img_final, None, fx=0.5, fy=0.5))
+      if self.output_media_path is not None:
+        if self.input_media_type is 'video':
+          video_writer.write(img_final) # write the current visualization frame to a video
+        else: # self.input_media_type is 'image'
+          cv2.imwrite(str(self.output_media_path), img_final) # write the visualization image
+
+      if self.input_media_type is 'video':
+        wait_time_ms = 25 # show each frame for 25 milliseconds
+      else: # self.input_media_type is 'image'
+        wait_time_ms = 0 # show the image indefinitely
+      # Show the frame for the specified time and if the user presses the 'q' key, then exit
+      if cv2.waitKey(wait_time_ms) & 0xFF == ord('q'):
         break
 
-    cap.release()
-    if self.output_path is not None:
-      video_writer.release()
-    cv2.destroyAllWindows()
+      # Whether or not to stay in the while loop
+      if self.input_media_type is 'video':
+        keep_looping = video_reader.isOpened()
+      else: # self.input_media_type is 'image'
+        keep_looping = False # an image only has one frame, so we should instantly break from the while loop
+
+    if self.input_media_type is 'video':
+      video_reader.release() # close the video reader
+      if self.output_media_path is not None:
+        video_writer.release() # close the video writer
+
+    cv2.destroyAllWindows() # close the opencv window
 
 
 if __name__ == '__main__':
@@ -675,14 +720,17 @@ if __name__ == '__main__':
 
   # Get command line arguments
   parser = argparse.ArgumentParser(description='Find the lane in a video stream.')
-  parser.add_argument('--video-path', required=True,  help='The path to the video that should be'
-    ' processed. A good option would be `media/test_input_videos/project_video.mp4`.')
-  parser.add_argument('--output-path', help='If set, then the processed video stream will be'
-    ' written to the specified path. A good option would be `media/test_output_videos/<name>.avi`.')
+  parser.add_argument('--input-media-path', required=True,  help='The path to the input media that'
+    ' should be processed. This can be either a video or an image. A good option would be'
+    ' `media/test_input_videos/project_video.mp4` or `media/test_input_images/straight_lines_1.jpg`'
+    '.')
+  parser.add_argument('--output-media-path', help='If set, then the final visualization of the'
+    ' processed media will be written to the specified path. A good option would be'
+    ' `media/test_output_videos/<name>.avi` or `media/test_output_images/<name>.png`.')
   parser.add_argument('--debug', action='store_true', help='Set debug mode. Shows more'
     ' visualizations of the different steps in the lane detection pipeline.')
   args = parser.parse_args()
 
   # Create a LaneFinder object and run the main function with the command line arguments
-  lf = LaneFinder(args.video_path, args.output_path, args.debug)
+  lf = LaneFinder(args.input_media_path, args.output_media_path, args.debug)
   lf.main()
